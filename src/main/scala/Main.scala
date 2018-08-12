@@ -5,7 +5,12 @@ import diode.ActionResult.ModelUpdate
 import javax.swing._
 
 object VDOM {
-  sealed trait VdomNode
+  sealed trait VdomNode {
+
+  }
+
+  case class Changed(old: VdomNode, `new`: VdomNode)
+  case class Diff(added: Seq[VdomNode], removed: Seq[VdomNode], changed: Seq[Changed])
 
   case class FrameProps()
   case class PanelProps()
@@ -95,8 +100,33 @@ object VDOM {
       }
     }
 
-    private def applyChanges(node: VDOM.VdomNode): Unit = {
-      throw new Exception("Not Implemented")
+    private def applyChanges(newDOM: VDOM.VdomNode): Unit = {
+      applyChanges(currentDOM, newDOM)
+    }
+
+    private def applyChanges(old: VdomNode, `new`: VdomNode): Unit= {
+      val Diff(added, removed, changed) = diff(old, `new`)
+      for(toAdd <- added){
+        addNode(old, toAdd)
+      }
+      for(toRemove <- removed){
+        removeNode(old, toRemove)
+      }
+      for(toChange <- changed){
+        applyChanges(toChange.old, toChange.`new`)
+      }
+    }
+
+    private def addNode(old: VdomNode, toAdd: VdomNode): Unit = {
+      throw new Exception("addNode - not implemented")
+    }
+
+    private def removeNode(old: VdomNode, toRemove: VdomNode): Unit = {
+      throw new Exception("removeNode - not implemented")
+    }
+
+    private def diff(old: VdomNode, `new`: VdomNode): Diff = {
+      throw new Exception("diff - not implemented")
     }
   }
 
