@@ -2,6 +2,7 @@ import java.awt.event.{ActionEvent, ActionListener}
 
 import diode._
 import javax.swing._
+import net.miginfocom.swing.MigLayout
 
 object VDOM {
 
@@ -109,8 +110,12 @@ object VDOM {
     }.toSeq
   }
 
+  sealed trait PanelDirection
+  case object Horizontal extends PanelDirection
+  case object Vertical extends PanelDirection
+
   case class FrameProps()
-  case class PanelProps()
+  case class PanelProps(direction: PanelDirection)
   case class LabelProps(text: String)
   case class ButtonProps(text: String, onClick: ActionListener) {
     override def toString: String = s"ButtonProps($text)"
@@ -125,9 +130,6 @@ object VDOM {
     type SwingComponent = JFrame
 
     protected override def updateProps(newProps: FrameProps):VdomNode = {
-      if(this.props != newProps){
-        println("Apply Frame Props")
-      }
       this
     }
 
@@ -162,14 +164,17 @@ object VDOM {
     type Props = PanelProps
     type SwingComponent = JPanel
 
-    println("Create Panel", children)
-
     protected override def updateProps(props: Props): VdomNode = {
       this
     }
 
     override def initialRender: VdomNode = {
       val panel = new JPanel()
+      val layout = props.direction match {
+        case Horizontal => new MigLayout()
+        case Vertical => new MigLayout("wrap 1")
+      }
+      panel.setLayout(layout)
       val childNodes = this.children.map(_.initialRender)
       for(child <- childNodes){
         panel.add(child.component)
@@ -182,19 +187,17 @@ object VDOM {
     }
 
     override def addChild(node: VdomNode): Unit = {
-      println("Add to Panel", node)
       this.component.add(node.component)
     }
 
     override def removeChild(node: VdomNode): Unit = {
-      println("Remove from Panel", node)
       this.component.remove(node.component)
     }
   }
 
   object Panel {
-    def apply(children: VdomNode*): Panel = {
-      Panel(PanelProps(), children, null)
+    def apply(direction: PanelDirection, children: VdomNode*): Panel = {
+      Panel(PanelProps(direction), children, null)
     }
   }
 
@@ -209,14 +212,12 @@ object VDOM {
 
     override def updateProps(newProps: Props): VdomNode = {
       if(props.text != newProps.text){
-//        println("Update Label Text")
         component.setText(newProps.text)
       }
       this.copy(props=newProps)
     }
 
     override def initialRender: VdomNode = {
-      println("Create JLAbel")
       val label = new JLabel(this.props.text)
       this.copy(component = label)
     }
@@ -236,11 +237,9 @@ object VDOM {
 
     protected override def updateProps(newProps: Props): VdomNode = {
       if(this.props.text != newProps.text){
-        println("Update Button Text")
         component.setText(newProps.text)
       }
       if(this.props.onClick != newProps.onClick){
-        println("Update Button onClick")
         component.removeActionListener(this.props.onClick)
         component.addActionListener(newProps.onClick)
       }
@@ -248,7 +247,6 @@ object VDOM {
     }
 
     override def initialRender: VdomNode = {
-      println("Update initialRender")
       val btn = new JButton(this.props.text)
       btn.addActionListener(this.props.onClick)
       this.copy(component = btn)
@@ -301,10 +299,11 @@ case class HelloWorld() extends Component[HelloWorldProps] {
 
   override def render(props: HelloWorldProps): VdomNode = {
     Frame(children = Seq(
-      Panel(Seq(
+      Panel(Vertical, Seq(
         Label(s"Hello, this count is: ${props.count}"),
-        Button("Increment", onClick=increment),
-        Button("Decrement", onClick=decrement),
+        Panel(Horizontal,
+          Button("Increment", onClick=increment),
+          Button("Decrement", onClick=decrement)),
         if(props.count < 0) Label("It's gone negative") else null
       ).filterNot(_ == null):_*)
     ))
