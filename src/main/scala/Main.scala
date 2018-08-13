@@ -1,16 +1,75 @@
 import java.awt.event.{ActionEvent, ActionListener}
-import java.util.UUID
 
 import diode._
-import diode.ActionResult.ModelUpdate
 import javax.swing._
 
-import scala.collection.mutable
-
 object VDOM {
+
   sealed trait VdomNode {
-    def id: UUID
+    type Props
+    type SwingComponent <: java.awt.Component
+
+    def props: Props
     def children: Seq[VdomNode]
+    def component: SwingComponent
+
+    def initialRender: VdomNode
+
+    protected def updateProps(props: Props): VdomNode
+    protected def addChild(node: VdomNode): Unit = ???
+    protected def removeChild(node: VdomNode): Unit = ???
+    protected def destroy:Unit = {}
+    protected def copy(
+      props: Props = this.props,
+      children: Seq[VdomNode] = this.children,
+      component: SwingComponent = this.component
+    ): VdomNode
+
+    final def update(newNode: VdomNode): VdomNode = {
+      var updatedNode = this
+      if(this.props != newNode.props){
+        updatedNode = this.updateProps(newNode.props.asInstanceOf[Props])
+      }
+      if(this.children != newNode.children){
+        updatedNode = this.updateChildren(newNode.children)
+      }
+      updatedNode
+    }
+
+
+    final protected def updateChildren(newChildren: Seq[VdomNode]): VdomNode = {
+      if(this.children == newChildren){
+        this
+      } else {
+        // group children by type, and then zip them with indexes, and compare
+        // the type+index can be the id for the purposes of DiffChildren
+
+        val DiffChildren(added, removed, updated) = diff(this.children, newChildren)
+
+//        println("Diff Children", added, removed)
+
+        val addedChildren = added.map(_.initialRender)
+        addedChildren.foreach(this.addChild)
+
+        removed.foreach(this.removeChild)
+        removed.foreach(_.destroy)
+
+        val updatedChildren = updated.map(change => change.old.update(change.`new`))
+
+        // update component after children are added or removed
+        if(added.nonEmpty || removed.nonEmpty){
+          this.component.invalidate()
+          this.component.repaint()
+        }
+        this.copy(children=updatedChildren ++ addedChildren)
+      }
+    }
+
+    override def toString: String = {
+      this.getClass.getSimpleName + "(" + this.props.toString + "," + this.children + ")"
+    }
+
+
   }
   case class Changed(old: VdomNode, `new`: VdomNode)
   case class DiffChildren(added: Seq[VdomNode], removed: Seq[VdomNode], changed: Seq[Changed])
@@ -19,44 +78,196 @@ object VDOM {
     lazy val empty = DiffChildren(Seq(), Seq(), Seq())
   }
 
+  private def diff(oldChildren: Seq[VdomNode], newChildren: Seq[VdomNode]): DiffChildren = {
+    val oldChildrenWithIDs = combineWithIDs(oldChildren)
+    val newChildrenWithIDs = combineWithIDs(newChildren)
+    val added = newChildrenWithIDs.filterNot(c => oldChildrenWithIDs.exists(o => o.id == c.id)).map(_.node)
+    val removed = oldChildrenWithIDs.filterNot(o => newChildrenWithIDs.exists(c => o.id == c.id)).map(_.node)
+    val changed = newChildrenWithIDs.map(`new` => {
+      oldChildrenWithIDs.find(_.id == `new`.id).flatMap(old => {
+        if(`new` != old){
+            Some(Changed(old.node,`new`.node))
+          } else {
+            None
+          }
+      })
+    }).filter(_.isDefined).map(_.get)
+    DiffChildren(added, removed, changed)
+  }
+
+  case class NodeWithID(node: VdomNode, id: String)
+
+  private def combineWithIDs(nodes: Seq[VDOM.VdomNode]): Seq[NodeWithID] = {
+    nodes.zipWithIndex.groupBy{
+      case (node, index) => node.getClass.getName
+    }.flatMap {
+      case (group, ns) =>
+        ns.sortBy(_._2).map(_._1).zipWithIndex.map {
+          case (node, index) =>
+            NodeWithID(node, s"$group-$index")
+        }
+    }.toSeq
+  }
+
   case class FrameProps()
   case class PanelProps()
   case class LabelProps(text: String)
-  case class ButtonProps(text: String, onClick: ActionListener)
+  case class ButtonProps(text: String, onClick: ActionListener) {
+    override def toString: String = s"ButtonProps($text)"
+  }
 
   case class Frame(
-    id: UUID,
     props: FrameProps = FrameProps(),
-    children: Seq[VdomNode] = Seq()
-  ) extends VdomNode
+    children: Seq[VdomNode] = Seq(),
+    component: JFrame = null
+  ) extends VdomNode {
+    type Props = FrameProps
+    type SwingComponent = JFrame
+
+    protected override def updateProps(newProps: FrameProps):VdomNode = {
+      if(this.props != newProps){
+        println("Apply Frame Props")
+      }
+      this
+    }
+
+    override def initialRender: VdomNode = {
+      val frame = new JFrame()
+      frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE)
+      val childNodes = this.children.map(_.initialRender)
+      childNodes.foreach(node => frame.add(node.component))
+      frame.pack()
+      frame.setVisible(true)
+      this.copy(component = frame, children = childNodes)
+    }
+
+    override def copy(props: FrameProps, children: Seq[VdomNode], component: JFrame): VdomNode = {
+      Frame(props, children, component)
+    }
+
+    override def addChild(node: VdomNode): Unit = {
+      this.component.add(node.component)
+    }
+
+    override def removeChild(node: VdomNode): Unit = {
+      this.component.remove(node.component)
+    }
+  }
 
   case class Panel(
-    id: UUID,
-    props: PanelProps = PanelProps(),
-    children: Seq[VdomNode] = Seq()
-  ) extends VdomNode
-  case class Label(
-    id: UUID,
-    props: LabelProps
+    props: PanelProps,
+    children: Seq[VdomNode],
+    component: JPanel
   ) extends VdomNode {
+    type Props = PanelProps
+    type SwingComponent = JPanel
+
+    println("Create Panel", children)
+
+    protected override def updateProps(props: Props): VdomNode = {
+      this
+    }
+
+    override def initialRender: VdomNode = {
+      val panel = new JPanel()
+      val childNodes = this.children.map(_.initialRender)
+      for(child <- childNodes){
+        panel.add(child.component)
+      }
+      this.copy(component = panel, children = childNodes)
+    }
+
+    override def copy(props: PanelProps, children: Seq[VdomNode], component: JPanel): VdomNode = {
+      Panel(props, children, component)
+    }
+
+    override def addChild(node: VdomNode): Unit = {
+      println("Add to Panel", node)
+      this.component.add(node.component)
+    }
+
+    override def removeChild(node: VdomNode): Unit = {
+      println("Remove from Panel", node)
+      this.component.remove(node.component)
+    }
+  }
+
+  object Panel {
+    def apply(children: VdomNode*): Panel = {
+      Panel(PanelProps(), children, null)
+    }
+  }
+
+  case class Label(
+    props: LabelProps,
+    component: JLabel = null
+  ) extends VdomNode {
+    type Props = LabelProps
+    type SwingComponent = JLabel
+
     val children = Seq()
+
+    override def updateProps(newProps: Props): VdomNode = {
+      if(props.text != newProps.text){
+//        println("Update Label Text")
+        component.setText(newProps.text)
+      }
+      this.copy(props=newProps)
+    }
+
+    override def initialRender: VdomNode = {
+      println("Create JLAbel")
+      val label = new JLabel(this.props.text)
+      this.copy(component = label)
+    }
+
+    override def copy(props: LabelProps, children: Seq[VdomNode], component: JLabel): VdomNode = {
+      Label(props, component)
+    }
   }
   case class Button(
-    id: UUID,
-    props: ButtonProps
+    props: ButtonProps,
+    component: JButton = null
   ) extends VdomNode {
+    type Props = ButtonProps
+    type SwingComponent = JButton
+    type Node = this.type
     val children = Seq()
+
+    protected override def updateProps(newProps: Props): VdomNode = {
+      if(this.props.text != newProps.text){
+        println("Update Button Text")
+        component.setText(newProps.text)
+      }
+      if(this.props.onClick != newProps.onClick){
+        println("Update Button onClick")
+        component.removeActionListener(this.props.onClick)
+        component.addActionListener(newProps.onClick)
+      }
+      this.copy(props = newProps)
+    }
+
+    override def initialRender: VdomNode = {
+      println("Update initialRender")
+      val btn = new JButton(this.props.text)
+      btn.addActionListener(this.props.onClick)
+      this.copy(component = btn)
+    }
+
+    override def copy(props: ButtonProps, children: Seq[VdomNode], component: JButton): VdomNode = {
+      Button(props, component)
+    }
   }
 
   object Button {
-    def apply(id: UUID, text: String, onClick: ActionListener): Button = {
-      Button(id, ButtonProps(text, onClick))
+    def apply(text: String, onClick: ActionListener): Button = {
+      Button(ButtonProps(text, onClick))
     }
   }
 
   object Label {
-    def apply(id: UUID, text: String): Label = {
-      Label(id, LabelProps(text))
+    def apply(text: String): Label = {
+      Label(LabelProps(text))
     }
   }
 
@@ -67,157 +278,18 @@ object VDOM {
     def componentWillUnmount():Unit = {}
   }
 
-
-
-  class VDOMRenderer {
-    var currentDOM: VdomNode = null
-    val componentsTable = new mutable.HashMap[UUID, java.awt.Component]()
+  class VDOMRenderer{
+    var currentDOM: VdomNode = _
 
     def render(newDOM: VdomNode): Unit = {
       SwingUtilities.invokeLater(() => {
         if(currentDOM == null){
-          initialRender(newDOM)
+          currentDOM = newDOM.initialRender
         } else {
-          applyChanges(newDOM)
+          currentDOM = currentDOM.update(newDOM)
         }
-        currentDOM = newDOM
       })
     }
-
-    private def initialRender(node: VdomNode): java.awt.Component = {
-      node match {
-        case c:Frame => {
-          val frame = new JFrame()
-          componentsTable.update(c.id, frame)
-          frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE)
-          for(child <- c.children){
-            frame.add(initialRender(child))
-          }
-          frame.pack()
-          frame.setVisible(true)
-          frame
-        }
-        case c:Panel => {
-          val panel = new JPanel()
-          componentsTable.update(c.id, panel)
-          for(child <- c.children){
-            panel.add(initialRender(child))
-          }
-          panel
-        }
-        case c:Label => {
-          val label = new JLabel(c.props.text)
-          componentsTable.update(c.id, label)
-          label
-        }
-        case c:Button => {
-          val btn = new JButton(c.props.text)
-          componentsTable.update(c.id, btn)
-          btn.addActionListener(c.props.onClick)
-          btn
-        }
-      }
-    }
-
-    private def applyChanges(newDOM: VDOM.VdomNode): Unit = {
-      applyChanges(currentDOM, newDOM)
-    }
-
-    private def applyChanges(old: VdomNode, `new`: VdomNode): Unit = {
-      applyPropertyChanges(old, `new`)
-      applyChildChanges(old, `new`)
-    }
-
-    private def applyPropertyChanges(old: VdomNode, `new`: VdomNode): Unit = {
-      old match {
-        case oldLabel:Label =>
-          applyLabelPropertyChanges(findComponent(old), oldLabel.props, `new`.asInstanceOf[Label].props)
-        case oldButton:Button =>
-          applyButtonPropertyChanges(findComponent(old), oldButton.props, `new`.asInstanceOf[Button].props)
-        case oldPanel:Panel =>
-          applyPanelPropertyChanges(findComponent(old), oldPanel.props, `new`.asInstanceOf[Panel].props)
-        case oldFrame:Frame =>
-          applyFramePropertyChanges(findComponent(old), oldFrame.props, `new`.asInstanceOf[Frame].props)
-      }
-    }
-
-    private def applyChildChanges(old: VdomNode, `new`: VdomNode): Unit = {
-      val DiffChildren(added, removed, changed) = diffChildren(old, `new`)
-      for(toAdd <- added) {
-        old match {
-          case panel:Panel =>
-            throw new Exception("add to panel - not implemented")
-          case frame:Frame =>
-            throw new Exception("add to frame - not implemented")
-          case x =>
-            throw new Exception(s"Cannot add children to: $x")
-        }
-      }
-      for(toRemove <- removed){
-        old match {
-          case panel:Panel =>
-            throw new Exception("remove from panel - not implemented")
-          case frame: Frame =>
-            throw new Exception("remove from frame - not implemented")
-          case x =>
-            throw new Exception(s"Cannot remove children from: $x")
-        }
-      }
-      for(toChange <- changed){
-        applyChanges(toChange.old, toChange.`new`)
-      }
-    }
-
-    private def applyLabelPropertyChanges(label: JLabel, oldProps: LabelProps, newProps: LabelProps): Unit = {
-      if(oldProps.text != newProps.text){
-        println("Update Label Text", newProps.text)
-        label.setText(newProps.text)
-      }
-    }
-
-    private def applyButtonPropertyChanges(button: JButton, oldProps: ButtonProps, newProps: ButtonProps): Unit = {
-      if(oldProps.text != newProps.text){
-        println("Update Button Text", newProps.text)
-        button.setText(newProps.text)
-      }
-      if(oldProps.onClick != newProps.onClick){
-        println("Update Button OnClick", newProps.onClick)
-        button.removeActionListener(oldProps.onClick)
-        button.addActionListener(newProps.onClick)
-      }
-    }
-
-    private def applyPanelPropertyChanges(panel: JPanel, oldProps: PanelProps, newProps: PanelProps): Unit = {
-      println("applyFramePropertyChanges - Nothing to Apply")
-    }
-
-    private def applyFramePropertyChanges(frame: JFrame, oldProps: FrameProps, newProps: FrameProps): Unit = {
-      println("applyFramePropertyChanges - Nothing to Apply")
-    }
-
-    private def findComponent[A](node: VDOM.VdomNode): A = {
-      componentsTable(node.id).asInstanceOf[A]
-    }
-
-    private def diffChildren(oldNode: VdomNode, newNode: VdomNode): DiffChildren = {
-      if(oldNode == newNode){
-        DiffChildren.empty
-      } else {
-        val added = newNode.children.filterNot(c => oldNode.children.exists(o => o.id == c.id))
-        val removed = oldNode.children.filterNot(o => newNode.children.exists(c => o.id == c.id))
-        val changed = oldNode.children.map(x => {
-          newNode.children.find(_.id == x.id).flatMap(y => {
-            if(x != y){
-              Some(Changed(x,y))
-            } else {
-              None
-            }
-          })
-        }).filter(_.isDefined).map(_.get)
-        DiffChildren(added, removed, changed)
-      }
-    }
-
   }
 
 }
@@ -227,20 +299,14 @@ import VDOM._
 case class HelloWorldProps(count: Int)
 case class HelloWorld() extends Component[HelloWorldProps] {
 
-  private lazy val frameID = UUID.randomUUID()
-  private lazy val panelID = UUID.randomUUID()
-  private lazy val labelID = UUID.randomUUID()
-  private lazy val incrementID = UUID.randomUUID()
-  private lazy val decrementID = UUID.randomUUID()
-
   override def render(props: HelloWorldProps): VdomNode = {
-    println("RENDER", props.count)
-    Frame(frameID, children = Seq(
-      Panel(panelID, children = Seq(
-        Label(labelID, s"Hello, this count is: ${props.count}"),
-        Button(incrementID, "Increment", onClick=increment),
-        Button(decrementID, "Decrement", onClick=decrement)
-      ))
+    Frame(children = Seq(
+      Panel(Seq(
+        Label(s"Hello, this count is: ${props.count}"),
+        Button("Increment", onClick=increment),
+        Button("Decrement", onClick=decrement),
+        if(props.count < 0) Label("It's gone negative") else null
+      ).filterNot(_ == null):_*)
     ))
   }
 
@@ -284,7 +350,6 @@ object Main {
     val renderer = new VDOMRenderer()
     val root = App.render(HelloWorldProps(0))
     AppCircuit.subscribe(AppCircuit.zoom(identity))((model: ModelRO[RootModel]) => {
-      println("Re-Render")
       renderer.render(App.render(HelloWorldProps(model.value.counter)))
     })
     renderer.render(root)
