@@ -10,7 +10,7 @@ object Counter {
   def apply(count: Int): VdomNode = {
     Frame(children = Seq(
       Panel(Vertical, Seq(
-        Label(s"Hello, the count is: ${count}"),
+        Label(s"Hello, the count is: $count"),
         Panel(Horizontal,
           Button("Increment", onClick=increment),
           Button("Decrement", onClick=decrement)),
