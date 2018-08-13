@@ -1,6 +1,7 @@
-import java.awt.event.{ActionEvent, ActionListener}
+package tomato.vdom
 
-import diode._
+import java.awt.event.ActionListener
+
 import javax.swing._
 import net.miginfocom.swing.MigLayout
 
@@ -47,7 +48,7 @@ object VDOM {
 
         val DiffChildren(added, removed, updated) = diff(this.children, newChildren)
 
-//        println("Diff Children", added, removed)
+        //        println("Diff Children", added, removed)
 
         val addedChildren = added.map(_.initialRender)
         addedChildren.foreach(this.addChild)
@@ -87,10 +88,10 @@ object VDOM {
     val changed = newChildrenWithIDs.map(`new` => {
       oldChildrenWithIDs.find(_.id == `new`.id).flatMap(old => {
         if(`new` != old){
-            Some(Changed(old.node,`new`.node))
-          } else {
-            None
-          }
+          Some(Changed(old.node,`new`.node))
+        } else {
+          None
+        }
       })
     }).filter(_.isDefined).map(_.get)
     DiffChildren(added, removed, changed)
@@ -269,13 +270,6 @@ object VDOM {
     }
   }
 
-  trait Component[A] {
-    def render(props: A): VdomNode
-    def shouldComponentUpdate(newProps: A, oldProps: A): Boolean = { true }
-    def componentDidMount(): Unit = {}
-    def componentWillUnmount():Unit = {}
-  }
-
   class VDOMRenderer{
     var currentDOM: VdomNode = _
 
@@ -288,70 +282,6 @@ object VDOM {
         }
       })
     }
-  }
-
-}
-
-import VDOM._
-
-case class HelloWorldProps(count: Int)
-case class HelloWorld() extends Component[HelloWorldProps] {
-
-  override def render(props: HelloWorldProps): VdomNode = {
-    Frame(children = Seq(
-      Panel(Vertical, Seq(
-        Label(s"Hello, this count is: ${props.count}"),
-        Panel(Horizontal,
-          Button("Increment", onClick=increment),
-          Button("Decrement", onClick=decrement)),
-        if(props.count < 0) Label("It's gone negative") else null
-      ).filterNot(_ == null):_*)
-    ))
-  }
-
-  private lazy val increment = new ActionListener {
-    override def actionPerformed(e: ActionEvent): Unit = {
-      AppCircuit.dispatch(Increment)
-    }
-  }
-
-  private lazy val decrement = new ActionListener {
-    override def actionPerformed(e: ActionEvent): Unit = {
-      AppCircuit.dispatch(Decrement)
-    }
-  }
-}
-
-case class RootModel(counter: Int = 0)
-
-case object Increment extends diode.Action
-case object Decrement extends diode.Action
-case object Reset extends diode.Action
-
-object AppCircuit extends diode.Circuit[RootModel] {
-  override protected def initialModel: RootModel = RootModel()
-
-  val incrementHandler =  new ActionHandler(zoomTo(_.counter)) {
-    override def handle: PartialFunction[Any, ActionResult[RootModel]] = {
-      case Increment => updated(value + 1)
-      case Decrement => updated(value - 1)
-      case Reset => updated(0)
-    }
-  }
-
-  override protected def actionHandler = composeHandlers(incrementHandler)
-}
-
-object Main {
-
-  def main(args: Array[String]): Unit = {
-    val App = HelloWorld()
-    val renderer = new VDOMRenderer()
-    val root = App.render(HelloWorldProps(0))
-    AppCircuit.subscribe(AppCircuit.zoom(identity))((model: ModelRO[RootModel]) => {
-      renderer.render(App.render(HelloWorldProps(model.value.counter)))
-    })
-    renderer.render(root)
   }
 
 }
